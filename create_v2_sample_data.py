@@ -1,30 +1,71 @@
 import os
 import pandas as pd
+from typing import List
+from pydantic import BaseModel, Field, field_validator, ValidationError
 
-# Create a sample DataFrame with column names
-data = {'Name': ['Alice', 'Bob', 'Charlie'],
+
+# ---------- 1. Define the Pydantic model ----------
+class Person(BaseModel):
+    """Schema for a single row of the DataFrame."""
+    Name: str = Field(..., min_length=1, description="Person's name")
+    Age: int = Field(..., ge=0, le=120, description="Age must be 0-120")
+    City: str = Field(..., min_length=1, description="City name")
+
+    @field_validator("Name", "City")
+    @classmethod
+    def strip_and_check(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("must not be empty or whitespace")
+        return v
+
+    # (Optional) Example: normalize title case
+    @field_validator("Name", "City")
+    @classmethod
+    def to_title(cls, v: str) -> str:
+        return v.title()
+
+
+# ---------- 2. Build DataFrame ----------
+data = {
+    'Name': ['Alice', 'Bob', 'Charlie'],
     'Age': [25, 30, 35],
-    'City': ['New York', 'Los Angeles', 'Chicago']
-    }
-
+    'City': ['New York', 'Los Angeles', 'Chicago'],
+}
 df = pd.DataFrame(data)
 
-# # Adding new row to df for V2
+# Add more rows if you want
 new_row_loc = {'Name': 'GF1', 'Age': 20, 'City': 'City1'}
-df.loc[len(df.index)] = new_row_loc
 
-# # # Adding new row to df for V3
-# new_row_loc2 = {'Name': 'GF2', 'Age': 30, 'City': 'City2'}
-# df.loc[len(df.index)] = new_row_loc2
+# ---------- 3. Validate each row with Pydantic ----------
+validated_rows = []
 
-# Ensure the "data" directory exists at the root level
+
+for idx, row in df.iterrows(): # df.iterrows() gives you a (index, row) tuple, where row is a pandas Series
+    try:
+        # Person(**{'Name': 'Alice', 'Age': 25, 'City': 'New York'}) is exactly equivalent to Person(Name='Alice', Age=25, City='New York')
+        person = Person(**row.to_dict()) 
+        validated_rows.append(person.model_dump())  # model_dump() converts a model instance back into a plain Python dictionary
+    except ValidationError as e:
+        print(f"Row {idx} failed validation:\n{e}\n")
+
+# Add the new rows, also validated
+# model_validate() is used to validate data into a model instance. It's the modern replacement for Person(**data)
+try:
+    person = Person.model_validate(new_row_loc)
+    validated_rows.append(person.model_dump())
+except ValidationError as e:
+    print(f"Row failed validation:\n{e}\n")
+
+
+# ---------- 4. Rebuild DataFrame from validated data ----------
+clean_df = pd.DataFrame(validated_rows)
+
+# ---------- 5. Save to CSV ----------
 data_dir = 'data'
 os.makedirs(data_dir, exist_ok=True)
-
-# Define the file path
 file_path = os.path.join(data_dir, 'sample_data.csv')
 
-# Save the DataFrame to a CSV file, including column names
-df.to_csv(file_path, index=False)
-
+clean_df.to_csv(file_path, index=False)
 print(f"CSV file saved to {file_path}")
+print(clean_df)
